@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import List
+from itertools import chain
 import mido
 
 
@@ -48,6 +49,30 @@ class Chord:
         self.string_value = note.literal + pattern.name[0:3].lower()
 
 
+def find_harmony(notes: List[Note]) -> (str, Chord.Pattern):
+    major_steps = [0, 2, 4, 5, 7, 9, 11]
+
+    all_styles = dict()
+
+    for note in notes:
+        all_styles[note.literal] = set((i + note.octave_value) % 12 for i in major_steps)
+
+    notes_octave_values = set(note.octave_value for note in notes)
+    result = set()
+    result_note = ''
+    result_style = ''
+
+    for note, styles in all_styles.items():
+        common_major = notes_octave_values & styles
+
+        if len(common_major) > len(result):
+            result = common_major
+            result_note = note
+            result_style = Chord.Pattern.MAJOR
+
+    return result_note, result_style
+
+
 def midi_event_pair(note: Note) -> (mido.Message, mido.Message):
     return (
         mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
@@ -71,11 +96,21 @@ def append_track(
     file.tracks.append(new_track)
 
 
-def collect_notes(track: mido.MidiTrack) -> List[Note]:
-    filtered = (msg for msg in track if msg.type == 'note_off')
+def collect_notes(file: mido.MidiFile) -> List[Note]:
+    all_notes = []
+
+    for track in file.tracks:
+        all_notes += [msg for msg in track]
+
+    filtered = (msg for msg in all_notes if msg.type == 'note_off')
     return [Note(msg.note, msg.time) for msg in filtered]
 
 
-f = mido.MidiFile('input.mid')
+f = mido.MidiFile('input3.mid')
 append_track(f, [Note(37, 192), Note(38, 192)])
 f.save('output.mid')
+
+nts = collect_notes(f)
+n, t = find_harmony(nts)
+print(n)
+print(t)
