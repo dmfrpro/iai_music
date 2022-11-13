@@ -4,13 +4,10 @@ import mido
 
 
 class Note:
-    __LITERAL_VALS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
-
     midi_value: int
     octave_value: int
     octave: int
     playtime: int
-    literal: str
 
     def __init__(self, midi_value: int, playtime: int):
 
@@ -23,10 +20,6 @@ class Note:
         self.octave_value = midi_value % 12
         self.playtime = playtime
         self.octave = (midi_value - 12) // 12
-        self.literal = Note.__LITERAL_VALS[self.octave_value]
-
-    def is_half_tone(self):
-        return (self.midi_value % 12) in [1, 3, 6, 8, 10]
 
 
 class Chord:
@@ -36,40 +29,38 @@ class Chord:
         DIMINISHED = [0, 3, 9]
 
     notes: List[Note]
-    string_value: str
 
     def __init__(self, note: Note, pattern: Pattern):
         if not isinstance(pattern.value, List):
             raise TypeError('Pattern value is not an iterable object')
 
         chord_midi_values = (i + note.midi_value for i in pattern.value)
-
         self.notes = [Note(i, note.playtime) for i in chord_midi_values]
-        self.string_value = note.literal + pattern.name[0:3].lower()
 
 
-def find_harmony(notes: List[Note]) -> (str, Chord.Pattern):
+def find_harmony_style(notes: List[Note]) -> (Note, Chord.Pattern):
+    if notes is None or len(notes) == 0:
+        raise ValueError('Notes list is invalid')
+
     major_steps = [0, 2, 4, 5, 7, 9, 11]
 
     all_styles = dict()
 
     for note in notes:
-        all_styles[note.literal] = set((i + note.octave_value) % 12 for i in major_steps)
+        all_styles[note.octave_value] = set((i + note.octave_value) % 12 for i in major_steps)
 
     notes_octave_values = set(note.octave_value for note in notes)
     result = set()
-    result_note = ''
-    result_style = ''
+    octave_value = -1
 
     for note, styles in all_styles.items():
         common_major = notes_octave_values & styles
 
         if len(common_major) > len(result):
             result = common_major
-            result_note = note
-            result_style = Chord.Pattern.MAJOR
+            octave_value = note
 
-    return result_note, result_style
+    return Note((octave_value + 24) + 24, notes[0].playtime), Chord.Pattern.MAJOR
 
 
 def append_track(
