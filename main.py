@@ -102,16 +102,6 @@ def find_harmony_style(notes: List[Note]) -> (Note, Chord.Pattern):
     return Note((octave_value + 24) + 24, notes[0].playtime), Chord.Pattern.MAJOR
 
 
-def collect_notes(file: mido.MidiFile) -> List[Note]:
-    all_notes = []
-
-    for track in file.tracks:
-        all_notes += [msg for msg in track]
-
-    filtered = (msg for msg in all_notes if msg.type == 'note_off')
-    return [Note(msg.note, msg.time) for msg in filtered]
-
-
 f = mido.MidiFile('input3.mid')
 
 MidiHelper.append_chords(
