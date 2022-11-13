@@ -1,6 +1,5 @@
 from enum import Enum
 from typing import List
-from itertools import chain
 import mido
 
 
@@ -73,13 +72,6 @@ def find_harmony(notes: List[Note]) -> (str, Chord.Pattern):
     return result_note, result_style
 
 
-def midi_event_pair(note: Note) -> (mido.Message, mido.Message):
-    return (
-        mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
-        mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
-    )
-
-
 def append_track(
         file: mido.MidiFile,
         notes: List[Note],
@@ -91,7 +83,10 @@ def append_track(
     new_track.append(mido.Message('program_change', program=12, time=0))
 
     for note in notes:
-        new_track += list(midi_event_pair(note))
+        new_track += [
+            mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
+            mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
+        ]
 
     file.tracks.append(new_track)
 
@@ -109,8 +104,3 @@ def collect_notes(file: mido.MidiFile) -> List[Note]:
 f = mido.MidiFile('input3.mid')
 append_track(f, [Note(37, 192), Note(38, 192)])
 f.save('output.mid')
-
-nts = collect_notes(f)
-n, t = find_harmony(nts)
-print(n)
-print(t)
