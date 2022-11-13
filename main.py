@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Iterable
+from typing import List
 import mido
 
 
@@ -7,6 +7,7 @@ class Note:
     __LITERAL_VALS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
 
     midi_value: int
+    octave_value: int
     octave: int
     playtime: int
     literal: str
@@ -19,9 +20,10 @@ class Note:
             raise ValueError('Cannot create note: invalid playtime')
 
         self.midi_value = midi_value
+        self.octave_value = midi_value % 12
         self.playtime = playtime
         self.octave = (midi_value - 12) // 12
-        self.literal = Note.__LITERAL_VALS[midi_value % 12]
+        self.literal = Note.__LITERAL_VALS[self.octave_value]
 
     def is_half_tone(self):
         return (self.midi_value % 12) in [1, 3, 6, 8, 10]
@@ -33,16 +35,16 @@ class Chord:
         MINOR = [0, 3, 7]
         DIMINISHED = [0, 3, 9]
 
-    notes: [Note]
+    notes: List[Note]
     string_value: str
 
     def __init__(self, note: Note, pattern: Pattern):
-        if not isinstance(pattern.value, Iterable):
+        if not isinstance(pattern.value, List):
             raise TypeError('Pattern value is not an iterable object')
 
-        chord_midi_values = map(lambda i: i + note.midi_value, pattern.value)
+        chord_midi_values = (i + note.midi_value for i in pattern.value)
 
-        self.notes = list(map(lambda i: Note(i, note.playtime), chord_midi_values))
+        self.notes = [Note(i, note.playtime) for i in chord_midi_values]
         self.string_value = note.literal + pattern.name[0:3].lower()
 
 
@@ -55,7 +57,7 @@ def midi_event_pair(note: Note) -> (mido.Message, mido.Message):
 
 def append_track(
         file: mido.MidiFile,
-        notes: [Note],
+        notes: List[Note],
         track_type: str = 'track_name',
         track_name: str = 'Elec. Piano (Classic)'
 ):
@@ -69,9 +71,9 @@ def append_track(
     file.tracks.append(new_track)
 
 
-def collect_notes(track: mido.MidiTrack) -> [Note]:
-    filtered = filter(lambda msg: msg.type == 'note_off', track)
-    return list(map(lambda msg: Note(msg.note, msg.time), filtered))
+def collect_notes(track: mido.MidiTrack) -> List[Note]:
+    filtered = (msg for msg in track if msg.type == 'note_off')
+    return [Note(msg.note, msg.time) for msg in filtered]
 
 
 f = mido.MidiFile('input.mid')
