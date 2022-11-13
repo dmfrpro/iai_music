@@ -38,6 +38,45 @@ class Chord:
         self.notes = [Note(i, note.playtime) for i in chord_midi_values]
 
 
+class MidiHelper:
+
+    @staticmethod
+    def __append_track(
+            file: mido.MidiFile,
+            notes: List[Note],
+            track_type: str = 'track_name',
+            track_name: str = 'Elec. Piano (Classic)'
+    ):
+        new_track = mido.MidiTrack()
+        new_track.append(mido.MetaMessage(track_type, name=track_name))
+        new_track.append(mido.Message('program_change', program=12, time=0))
+
+        for note in notes:
+            new_track += [
+                mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
+                mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
+            ]
+
+        file.tracks.append(new_track)
+
+    @staticmethod
+    def append_chords(file: mido.MidiFile, chords: [Chord]):
+        new_tracks_len = max(len(chord.notes) for chord in chords)
+
+        for i in range(new_tracks_len):
+            MidiHelper.__append_track(file, [chord.notes[i] for chord in chords], track_name=f'chord_{i}')
+
+    @staticmethod
+    def collect_notes(file: mido.MidiFile) -> List[Note]:
+        all_notes = []
+
+        for track in file.tracks:
+            all_notes += [msg for msg in track]
+
+        filtered = (msg for msg in all_notes if msg.type == 'note_off')
+        return [Note(msg.note, msg.time) for msg in filtered]
+
+
 def find_harmony_style(notes: List[Note]) -> (Note, Chord.Pattern):
     if notes is None or len(notes) == 0:
         raise ValueError('Notes list is invalid')
@@ -63,25 +102,6 @@ def find_harmony_style(notes: List[Note]) -> (Note, Chord.Pattern):
     return Note((octave_value + 24) + 24, notes[0].playtime), Chord.Pattern.MAJOR
 
 
-def append_track(
-        file: mido.MidiFile,
-        notes: List[Note],
-        track_type: str = 'track_name',
-        track_name: str = 'Elec. Piano (Classic)'
-):
-    new_track = mido.MidiTrack()
-    new_track.append(mido.MetaMessage(track_type, name=track_name))
-    new_track.append(mido.Message('program_change', program=12, time=0))
-
-    for note in notes:
-        new_track += [
-            mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
-            mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
-        ]
-
-    file.tracks.append(new_track)
-
-
 def collect_notes(file: mido.MidiFile) -> List[Note]:
     all_notes = []
 
@@ -93,5 +113,10 @@ def collect_notes(file: mido.MidiFile) -> List[Note]:
 
 
 f = mido.MidiFile('input3.mid')
-append_track(f, [Note(37, 192), Note(38, 192)])
+
+MidiHelper.append_chords(
+    f,
+    [Chord(Note(64, 192), Chord.Pattern.MAJOR), Chord(Note(65, 192), Chord.Pattern.MAJOR)]
+)
+
 f.save('output.mid')
