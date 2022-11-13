@@ -1,23 +1,55 @@
+from enum import Enum
+from typing import Iterable
 import mido
 
 
 class Note:
-    __literal_vals = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
+    __LITERAL_VALS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
 
-    value: int = 0
-    playtime: int = 0
-    literal: str = ''
+    midi_value: int
+    octave: int
+    playtime: int
+    literal: str
 
-    def __init__(self, value: int, playtime: int):
-        self.value = value
+    def __init__(self, midi_value: int, playtime: int):
+
+        if not (21 <= midi_value <= 108):
+            raise ValueError('Cannot create note: invalid midi_value')
+        elif playtime < 0:
+            raise ValueError('Cannot create note: invalid playtime')
+
+        self.midi_value = midi_value
         self.playtime = playtime
-        self.literal = Note.__literal_vals[value % 12]
+        self.octave = (midi_value - 12) // 12
+        self.literal = Note.__LITERAL_VALS[midi_value % 12]
+
+    def is_half_tone(self):
+        return (self.midi_value % 12) in [1, 3, 6, 8, 10]
+
+
+class Chord:
+    class Pattern(Enum):
+        MAJOR = [0, 4, 7]
+        MINOR = [0, 3, 7]
+        DIMINISHED = [0, 3, 9]
+
+    notes: [Note]
+    string_value: str
+
+    def __init__(self, note: Note, pattern: Pattern):
+        if not isinstance(pattern.value, Iterable):
+            raise TypeError('Pattern value is not an iterable object')
+
+        chord_midi_values = map(lambda i: i + note.midi_value, pattern.value)
+
+        self.notes = list(map(lambda i: Note(i, note.playtime), chord_midi_values))
+        self.string_value = note.literal + pattern.name[0:3].lower()
 
 
 def midi_event_pair(note: Note) -> (mido.Message, mido.Message):
     return (
-        mido.Message('note_on', note=note.value, time=0, velocity=50),
-        mido.Message('note_off', note=note.value, time=note.playtime, velocity=0)
+        mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
+        mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
     )
 
 
