@@ -40,6 +40,9 @@ class Chord:
 
 class MidiHelper:
 
+    def __init__(self):
+        raise AssertionError('Utility class MidiHelper cannot be directly created')
+
     @staticmethod
     def __midi_event_pair(note: Note):
         return [
@@ -85,36 +88,43 @@ class MidiHelper:
         return [Note(msg.note, msg.time) for msg in filtered]
 
 
-def find_harmony_style(notes: List[Note]) -> (Note, Chord.Pattern):
-    if notes is None or len(notes) == 0:
-        raise ValueError('Notes list is invalid')
+class StyleHelper:
 
-    major_steps = [0, 2, 4, 5, 7, 9, 11]
+    def __init__(self):
+        raise AssertionError('Utility class StyleHelper cannot be directly created')
 
-    all_styles = dict()
+    @staticmethod
+    def find_best_major_style(notes: List[Note]) -> Note:
+        if notes is None or len(notes) == 0:
+            raise ValueError('Notes list is invalid')
 
-    for note in notes:
-        all_styles[note.octave_value] = set((i + note.octave_value) % 12 for i in major_steps)
+        major_steps = [0, 2, 4, 5, 7, 9, 11]
+        all_styles = {}
 
-    notes_octave_values = set(note.octave_value for note in notes)
-    result = set()
-    octave_value = -1
+        for note in notes:
+            all_styles[note.octave_value] = \
+                {(i + note.octave_value) % 12 for i in major_steps}
 
-    for note, styles in all_styles.items():
-        common_major = notes_octave_values & styles
+        notes_octave_values = {note.octave_value for note in notes}
+        result = {}
+        octave_value = -1
 
-        if len(common_major) > len(result):
-            result = common_major
-            octave_value = note
+        for note, styles in all_styles.items():
+            common_major = notes_octave_values & styles
 
-    return Note((octave_value + 24) + 24, notes[0].playtime), Chord.Pattern.MAJOR
+            if len(common_major) > len(result):
+                result = common_major
+                octave_value = note
+
+        return Note((octave_value + 24) + 24, notes[0].playtime)
 
 
 f = mido.MidiFile('input3.mid')
 
 MidiHelper.append_chords(
     f,
-    [Chord(Note(64, 192), Chord.Pattern.MAJOR), Chord(Note(65, 192), Chord.Pattern.MAJOR)]
+    [Chord(Note(64, 192), Chord.Pattern.MAJOR),
+     Chord(Note(65, 192), Chord.Pattern.MAJOR)]
 )
 
 f.save('output.mid')
