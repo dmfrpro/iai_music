@@ -41,6 +41,13 @@ class Chord:
 class MidiHelper:
 
     @staticmethod
+    def __midi_event_pair(note: Note):
+        return [
+            mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
+            mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
+        ]
+
+    @staticmethod
     def __append_track(
             file: mido.MidiFile,
             notes: List[Note],
@@ -52,10 +59,7 @@ class MidiHelper:
         new_track.append(mido.Message('program_change', program=12, time=0))
 
         for note in notes:
-            new_track += [
-                mido.Message('note_on', note=note.midi_value, time=0, velocity=50),
-                mido.Message('note_off', note=note.midi_value, time=note.playtime, velocity=0)
-            ]
+            new_track += MidiHelper.__midi_event_pair(note)
 
         file.tracks.append(new_track)
 
@@ -64,7 +68,11 @@ class MidiHelper:
         new_tracks_len = max(len(chord.notes) for chord in chords)
 
         for i in range(new_tracks_len):
-            MidiHelper.__append_track(file, [chord.notes[i] for chord in chords], track_name=f'chord_{i}')
+            MidiHelper.__append_track(
+                file,
+                [chord.notes[i] for chord in chords],
+                track_name=f'chord_{i}'
+            )
 
     @staticmethod
     def collect_notes(file: mido.MidiFile) -> List[Note]:
