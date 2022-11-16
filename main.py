@@ -88,13 +88,21 @@ class MidiHelper:
         return [Note(msg.note, msg.time) for msg in filtered]
 
 
-class StyleHelper:
+class MajorKey:
+    initial_note: Note
+    name: str
 
-    def __init__(self):
-        raise AssertionError('Utility class StyleHelper cannot be directly created')
+    def __init__(self, notes: List[Note]):
+        self.initial_note = MajorKey.__get_best_major_key(notes)
+        self.name = MajorKey.__get_key_name(self.initial_note)
 
     @staticmethod
-    def find_best_major_style(notes: List[Note]) -> Note:
+    def __get_key_name(note: Note) -> str:
+        note_literals = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
+        return note_literals[note.octave_value] + 'major'
+
+    @staticmethod
+    def __get_best_major_key(notes: List[Note]) -> Note:
         if notes is None or len(notes) == 0:
             raise ValueError('Notes list is invalid')
 
