@@ -105,7 +105,8 @@ class MajorKey:
     initial_note: Note
     chords: [Chord]
 
-    def __init__(self, notes: List[Note]):
+    @staticmethod
+    def __find_best_major_key(notes: List[Note]) -> Note:
         if notes is None or len(notes) == 0:
             raise ValueError('Notes list is invalid')
 
@@ -126,13 +127,17 @@ class MajorKey:
                 result = common_major
                 octave_value = note
 
-        self.initial_note = Note((octave_value + 24) + 12, notes[0].playtime)
+        return Note((octave_value + 24) + 12, notes[0].playtime)
+
+    def __init__(self, notes: List[Note]):
+        self.initial_note = MajorKey.__find_best_major_key(notes)
+
+        midi_value = self.initial_note.midi_value
+        playtime = self.initial_note.playtime
+
         self.chords = [
-            Chord(
-                Note((octave_value + 24 + i) + 12, notes[0].playtime),
-                MajorKey.__PATTERNS[i]
-            )
-            for i in range(len(all_styles[octave_value]))
+            Chord(Note(midi_value + i, playtime), MajorKey.__PATTERNS[i])
+            for i in range(len(MajorKey.__PATTERNS))
         ]
 
     def __str__(self):
@@ -145,5 +150,5 @@ for index, filename in enumerate(filenames):
     input_file = mido.MidiFile(filename)
     detected_key = MajorKey(MidiHelper.collect_notes(input_file))
 
-    MidiHelper.append_chords(input_file,detected_key.chords)
+    MidiHelper.append_chords(input_file, detected_key.chords)
     input_file.save(f'DmitriiAlekhinOutput{index + 1}-{detected_key}.mid')
