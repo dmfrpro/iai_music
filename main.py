@@ -22,12 +22,13 @@ class Note:
         self.octave = (midi_value - 12) // 12
 
 
-class Chord:
-    class Pattern(Enum):
-        MAJOR = [0, 4, 7]
-        MINOR = [0, 3, 7]
-        DIMINISHED = [0, 3, 9]
+class Pattern(Enum):
+    MAJOR = [0, 4, 7]
+    MINOR = [0, 3, 7]
+    DIMINISHED = [0, 3, 9]
 
+
+class Chord:
     notes: List[Note]
 
     def __init__(self, note: Note, pattern: Pattern):
@@ -89,29 +90,30 @@ class MidiHelper:
 
 
 class MajorKey:
+    __MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11]
+
+    __PATTERNS = [
+        Pattern.MAJOR,
+        Pattern.MINOR,
+        Pattern.MINOR,
+        Pattern.MAJOR,
+        Pattern.MAJOR,
+        Pattern.MINOR,
+        Pattern.DIMINISHED
+    ]
+
     initial_note: Note
-    name: str
+    chords: [Chord]
 
     def __init__(self, notes: List[Note]):
-        self.initial_note = MajorKey.__get_best_major_key(notes)
-        self.name = MajorKey.__get_key_name(self.initial_note)
-
-    @staticmethod
-    def __get_key_name(note: Note) -> str:
-        note_literals = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
-        return note_literals[note.octave_value] + 'major'
-
-    @staticmethod
-    def __get_best_major_key(notes: List[Note]) -> Note:
         if notes is None or len(notes) == 0:
             raise ValueError('Notes list is invalid')
 
-        major_steps = [0, 2, 4, 5, 7, 9, 11]
         all_styles = {}
 
         for note in notes:
             all_styles[note.octave_value] = \
-                {(i + note.octave_value) % 12 for i in major_steps}
+                {(i + note.octave_value) % 12 for i in MajorKey.__MAJOR_STEPS}
 
         notes_octave_values = {note.octave_value for note in notes}
         result = {}
@@ -124,15 +126,24 @@ class MajorKey:
                 result = common_major
                 octave_value = note
 
-        return Note((octave_value + 24) + 24, notes[0].playtime)
+        self.initial_note = Note((octave_value + 24) + 12, notes[0].playtime)
+        self.chords = [
+            Chord(
+                Note((octave_value + 24 + i) + 12, notes[0].playtime),
+                MajorKey.__PATTERNS[i]
+            )
+            for i in range(len(all_styles[octave_value]))
+        ]
+
+    def __str__(self):
+        literals = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
+        return literals[self.initial_note.octave_value]
 
 
-f = mido.MidiFile('input3.mid')
+filenames = ['barbiegirl_mono.mid', 'input1.mid', 'input2.mid', 'input3.mid']
+for index, filename in enumerate(filenames):
+    input_file = mido.MidiFile(filename)
+    detected_key = MajorKey(MidiHelper.collect_notes(input_file))
 
-MidiHelper.append_chords(
-    f,
-    [Chord(Note(64, 192), Chord.Pattern.MAJOR),
-     Chord(Note(65, 192), Chord.Pattern.MAJOR)]
-)
-
-f.save('output.mid')
+    MidiHelper.append_chords(input_file,detected_key.chords)
+    input_file.save(f'DmitriiAlekhinOutput{index + 1}-{detected_key}.mid')
