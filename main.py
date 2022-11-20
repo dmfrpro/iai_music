@@ -28,7 +28,7 @@ class Note:
 class Pattern(Enum):
     MAJOR = [0, 4, 7]
     MINOR = [0, 3, 7]
-    DIMINISHED = [0, 3, 9]
+    DIMINISHED = [0, 3, 6]
 
 
 class Chord:
