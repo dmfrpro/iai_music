@@ -107,15 +107,14 @@ class MidiHelper:
         for track in file.tracks:
             all_notes += [msg for msg in track]
 
-        filtered = (msg for msg in all_notes if msg.type == 'note_off')
+        filtered = filter(lambda x: x.type == 'note_off', all_notes)
         return [Note(msg.note, msg.time) for msg in filtered]
 
 
 class Key:
     __MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11]
-    __MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10]
 
-    __PATTERNS = [
+    __MAJOR_PATTERNS = [
         Pattern.MAJOR,
         Pattern.MINOR,
         Pattern.MINOR,
@@ -134,18 +133,14 @@ class Key:
             raise ValueError('Notes list is invalid')
 
         major_styles = {}
-        minor_styles = {}
 
         for note in notes:
             major_styles[note.octave_value] = \
                 {(i + note.octave_value) % 12 for i in Key.__MAJOR_STEPS}
-            minor_styles[note.octave_value] = \
-                {(i + note.octave_value) % 12 for i in Key.__MINOR_STEPS}
 
         notes_octave_values = {note.octave_value for note in notes}
         result = {}
         octave_value = -1
-        pattern = Pattern.MAJOR
 
         for note, styles in major_styles.items():
             common_major = notes_octave_values & styles
@@ -153,17 +148,8 @@ class Key:
             if len(common_major) > len(result):
                 result = common_major
                 octave_value = note
-                pattern = Pattern.MAJOR
 
-        for note, styles in minor_styles.items():
-            common_minor = notes_octave_values & styles
-
-            if len(common_minor) > len(result):
-                result = common_minor
-                octave_value = note
-                pattern = Pattern.MINOR
-
-        return Note((octave_value + 24) + 12, notes[0].playtime), pattern
+        return Note((octave_value + 24) + 12, notes[0].playtime), Pattern.MAJOR
 
     def __init__(self, notes: list[Note]):
         self.initial_note, pattern = Key.__best_key(notes)
@@ -172,8 +158,8 @@ class Key:
         playtime = self.initial_note.playtime
 
         self.chords = [
-            Chord(Note(midi_value + i, playtime), Key.__PATTERNS[i], i)
-            for i in range(len(Key.__PATTERNS))
+            Chord(Note(midi_value + i, playtime), Key.__MAJOR_PATTERNS[i], i)
+            for i in range(len(Key.__MAJOR_PATTERNS))
         ]
 
     def __str__(self):
