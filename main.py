@@ -51,19 +51,26 @@ class Chord:
     def fitness(
             self,
             key: "Key",
-            playing_note: Note,
+            playing_quart: list[Note],
             equal_pattern_factor: int = 2,
             equal_note_factor: int = 5,
-            distance_factor: int = 1
+            preferred_distance: int = 3,
+            distance_penalty: int = 10000000
     ) -> int:
         value = equal_pattern_factor if key.pattern == self.pattern else 0
 
         for i in range(len(self.notes)):
-            if self.notes[i] == playing_note:
-                value += equal_note_factor * (3 - i)
+            for j in range(len(playing_quart)):
+                if self.notes[i] == playing_quart[j]:
+                    value += equal_note_factor * (len(self.notes) - i)
 
-            value -= \
-                distance_factor * (11 - self.notes[i].octave_value - playing_note.octave_value)
+        distances = [
+            abs(playing_note.octave_value - note.octave_value)
+            for playing_note in playing_quart for note in self.notes
+        ]
+
+        if any(distance < preferred_distance for distance in distances):
+            value -= distance_penalty
 
         return value
 
@@ -86,7 +93,7 @@ class Key:
 
     initial_note: Note
     pattern: Pattern
-    chords: [Chord]
+    chords: list[Chord]
 
     @staticmethod
     def __best_key(melody: "Melody") -> (Note, Pattern):
@@ -110,9 +117,10 @@ class Key:
                 result = common_major
                 octave_value = note
 
-        return Note((octave_value + 24) + 12, 0, melody.notes[0].playtime), Pattern.MAJOR
+        midi_value = octave_value + 24 + 12 * max(melody.notes[0].octave - 3, 2)
+        return Note(midi_value, 0, melody.notes[0].playtime), Pattern.MAJOR
 
-    def __init__(self, melody: "Melody", playtime: int):
+    def __init__(self, melody: "Melody", playtime: int = 384):
         self.initial_note, self.pattern = Key.__best_key(melody)
 
         midi_value = self.initial_note.midi_value
@@ -134,10 +142,10 @@ class Progression:
         self.chords = chords
 
     @staticmethod
-    def random_progression(key: Key, notes: list[Note]) -> "Progression":
+    def random_progression(key: Key, melody: "Melody") -> "Progression":
         chords = [
             key.chords[random.randint(0, len(key.chords) - 1)]
-            for _ in range(len(notes))
+            for _ in range(len(melody.quarts))
         ]
 
         return Progression(chords)
@@ -158,8 +166,8 @@ class Progression:
     def mutate(
             self,
             key: Key,
-            invoke_prob: float = 0.05,
-            change_prob: float = 0.1,
+            invoke_prob: float = 0.2,
+            change_prob: float = 0.8,
             shift_limit: int = 3
     ) -> "Progression":
         if random.random() < invoke_prob:
@@ -176,56 +184,23 @@ class Progression:
     def fitness(
             self,
             key: Key,
-            notes: [Note],
+            melody: "Melody",
             equal_note_factor: int = 20,
-            repetition_factor: int = 10
+            repetition_factor: int = 1000,
+            repetition_penalty: int = -10e6
     ):
         value = 0
 
         previous_chord = None
         for i in range(len(self.chords)):
-            value += self.chords[i].fitness(key, notes[i]) * equal_note_factor
+            value += self.chords[i].fitness(key, melody.quarts[i]) * equal_note_factor
 
             value += repetition_factor \
-                if self.chords[i] != previous_chord else -repetition_factor
+                if self.chords[i] != previous_chord else repetition_penalty
 
             previous_chord = self.chords[i]
 
         return value
-
-
-class EvolutionaryAlgorithm:
-
-    @staticmethod
-    def __get_random_parents(survived: list[Progression]) -> (Progression, Progression):
-        return tuple(random.sample(survived, 2))
-
-    @staticmethod
-    def best_progression(
-            melody: "Melody",
-            key: Key,
-            generation_limit: int = 500,
-            population_size: int = 100,
-            selection_factor: int = 10
-    ) -> Progression:
-        if selection_factor > population_size:
-            raise AttributeError('Invalid selection factor')
-
-        population = [Progression.random_progression(key, melody.notes) for _ in range(population_size)]
-
-        for _ in range(generation_limit):
-            survived = sorted(population, key=lambda p: p.fitness(key, melody.notes))[:selection_factor]
-
-            for _ in range(population_size - selection_factor):
-                random_index = random.randint(0, selection_factor - 1)
-                parent1, parent2 = EvolutionaryAlgorithm.__get_random_parents(survived)
-
-                survived.append(survived[random_index].crossover(parent1, parent2).mutate(key))
-
-            population = survived
-
-        population = sorted(population, key=lambda p: p.fitness(key, melody.notes))
-        return population[0]
 
 
 class Melody:
@@ -263,6 +238,44 @@ class Melody:
         return sum(note.playtime + note.start_delay for note in self.notes)
 
 
+class EvolutionaryAlgorithm:
+
+    @staticmethod
+    def __get_random_parents(survived: list[Progression]) -> (Progression, Progression):
+        return tuple(random.sample(survived, 2))
+
+    @staticmethod
+    def best_progression(
+            melody: "Melody",
+            key: Key,
+            generation_limit: int = 1000,
+            population_size: int = 100,
+            selection_factor: int = 10
+    ) -> Progression:
+        if selection_factor > population_size:
+            raise AttributeError('Invalid selection factor')
+
+        population = [
+            Progression.random_progression(key, melody)
+            for _ in range(population_size)
+        ]
+
+        for _ in range(generation_limit):
+            population = sorted(population, key=lambda p: p.fitness(key, melody))
+            survived = population[-selection_factor:]
+
+            for _ in range(population_size - selection_factor):
+                random_index = random.randint(0, selection_factor - 1)
+                parent1, parent2 = EvolutionaryAlgorithm.__get_random_parents(survived)
+
+                survived.append(survived[random_index].crossover(parent1, parent2).mutate(key))
+
+            population = survived
+
+        population = sorted(population, key=lambda p: p.fitness(key, melody))
+        return population[-1]
+
+
 class MidiHelper:
 
     def __init__(self):
@@ -294,11 +307,11 @@ class MidiHelper:
         file.tracks.append(new_track)
 
     @staticmethod
-    def append_chords(file: mido.MidiFile, chords: list[Chord], velocity: int = 30):
-        for i in range(len(chords[0].notes)):
+    def append_progression(file: mido.MidiFile, progression: Progression, velocity: int = 25):
+        for i in range(len(progression.chords[0].notes)):
             MidiHelper.__append_track(
                 file,
-                [chord.notes[i] for chord in chords],
+                [chord.notes[i] for chord in progression.chords],
                 track_name=f'chord_{i}',
                 velocity=velocity
             )
@@ -327,9 +340,9 @@ for index, filename in enumerate(filenames):
     input_file = mido.MidiFile(filename)
 
     input_melody = MidiHelper.melody(input_file)
-    detected_key = Key(input_melody, 384)
+    detected_key = Key(input_melody)
 
-    progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_key)
+    best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_key)
 
-    MidiHelper.append_chords(input_file, progression.chords, velocity=30)
+    MidiHelper.append_progression(input_file, best_progression)
     input_file.save(f'DmitriiAlekhinOutput{index + 1}-{detected_key}.mid')
