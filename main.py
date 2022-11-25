@@ -1,4 +1,6 @@
 from enum import Enum
+from typing import Union
+
 import random
 import mido
 import music21
@@ -11,6 +13,9 @@ class Note:
 
     start_delay: int
     playtime: int
+
+    def split(self, left_time: int, sep: int = 384):
+        pass  # TODO make proper split of the note
 
     def __init__(self, midi_value: int, start_delay: int, playtime: int):
 
@@ -27,6 +32,9 @@ class Note:
 
     def __eq__(self, other):
         return isinstance(other, Note) and self.octave_value == other.octave_value
+
+    def __len__(self):
+        return self.start_delay + self.playtime
 
 
 class Pattern(Enum):
@@ -52,22 +60,22 @@ class Chord:
     def fitness(
             self,
             scale: "Scale",
-            playing_quart: list[Note],
-            equal_pattern_factor: int = 2,
-            equal_note_factor: int = 5,
-            preferred_distance: int = 3,
-            distance_penalty: int = 10000000
+            playing_bar: "Bar",
+            equal_pattern_factor: int = 2000,
+            equal_note_factor: int = 10e5,
+            preferred_distance: int = 4,
+            distance_penalty: int = 10e9
     ) -> int:
         value = equal_pattern_factor if scale.pattern == self.pattern else 0
 
         for i in range(len(self.notes)):
-            for j in range(len(playing_quart)):
-                if self.notes[i] == playing_quart[j]:
+            for j in range(len(playing_bar.notes)):
+                if self.notes[i] == playing_bar.notes[j]:
                     value += equal_note_factor * (len(self.notes) - i)
 
         distances = [
             abs(playing_note.octave_value - note.octave_value)
-            for playing_note in playing_quart for note in self.notes
+            for playing_note in playing_bar.notes for note in self.notes
         ]
 
         if any(distance < preferred_distance for distance in distances):
@@ -147,7 +155,7 @@ class Progression:
     def random_progression(scale: Scale, melody: "Melody") -> "Progression":
         chords = [
             scale.chords[random.randint(0, len(scale.chords) - 1)]
-            for _ in range(len(melody.quarts))
+            for _ in range(len(melody.bars))
         ]
 
         return Progression(chords)
@@ -189,7 +197,7 @@ class Progression:
             melody: "Melody",
             perfect_chord_factor: int = 500,
             imperfect_chord_penalty: int = 3000,
-            equal_scale_factor: int = 200,
+            equal_scale_factor: int = 500,
             repetition_factor: int = 1000,
             repetition_penalty: int = -10e6
     ):
@@ -197,7 +205,7 @@ class Progression:
 
         previous_chord = None
         for i in range(len(self.chords)):
-            value += self.chords[i].fitness(scale, melody.quarts[i]) * perfect_chord_factor
+            value += self.chords[i].fitness(scale, melody.bars[i]) * perfect_chord_factor
 
             value += equal_scale_factor \
                 if (self.chords[i].pattern == scale.pattern) else -imperfect_chord_penalty
@@ -210,39 +218,76 @@ class Progression:
         return value
 
 
-class Melody:
+class Bar:
     notes: list[Note]
-    quarts: list[list[Note]]
 
-    @staticmethod
-    def __get_quarts(notes: list[Note], sep: int = 384) -> list[list[Note]]:
-        quarts = []
+    def primary_note(self) -> Union[Note, None]:
+        if len(self.notes) == 0:
+            return None
 
-        time = 0
-        start_index = 0
-        for i in range(len(notes)):
-            time += notes[i].start_delay
-
-            if time >= sep:
-                quarts.append([])
-                start_index = i
-                time = 0
-
-            time += notes[i].playtime
-
-            if time >= sep:
-                quarts.append(notes[start_index:i + 1])
-                start_index = i + 1
-                time = 0
-
-        return quarts
+        return sorted(self.notes, key=lambda note: note[0].playtime)[0]
 
     def __init__(self, notes: list[Note]):
         self.notes = notes
-        self.quarts = Melody.__get_quarts(notes)
 
     def __len__(self):
-        return sum(note.playtime + note.start_delay for note in self.notes)
+        return sum(len(note) for note in self.notes)
+
+
+class Melody:
+    notes: list[Note]
+    bars: list[Bar]
+
+    def __put_note(self, note: Note, sep: int = 384):
+
+        #  TODO: make proper bar split
+
+        if len(self.bars) == 0:
+            self.bars.append(Bar([]))
+
+        if len(self.bars[-1]) + len(note) < sep:
+            self.bars[-1].notes.append(note)
+
+        elif len(self.bars[-1]) + len(note) == sep:
+            self.bars[-1].notes.append(note)
+            self.bars.append(Bar([]))
+
+        elif len(self.bars[-1]) + note.start_delay == sep:
+            self.bars.append(Bar([Note(note.midi_value, 0, note.playtime)]))
+
+        elif len(self.bars[-1]) + note.start_delay > sep:
+            patched = Note(
+                note.midi_value,
+                note.start_delay - (sep - len(self.bars[-1])),
+                note.playtime
+            )
+
+            self.bars.append(Bar([patched]))
+
+        else:
+            first_half = Note(
+                note.midi_value,
+                note.start_delay,
+                sep - len(self.bars[-1])
+            )
+
+            second_half = Note(
+                note.midi_value,
+                0,
+                note.playtime - first_half.playtime
+            )
+
+            self.bars[-1].notes.append(first_half)
+            self.bars.append(Bar([second_half]))
+
+    def __init__(self, notes: list[Note]):
+        self.notes = notes
+        self.bars = []
+
+        for note in self.notes:
+            self.__put_note(note)
+
+        del self.bars[-1]
 
 
 class EvolutionaryAlgorithm:
@@ -250,6 +295,20 @@ class EvolutionaryAlgorithm:
     @staticmethod
     def __get_random_parents(survived: list[Progression]) -> (Progression, Progression):
         return tuple(random.sample(survived, 2))
+
+    @staticmethod
+    def __normalized(progression: Progression, melody: Melody) -> Progression:
+        if len(melody.bars) != len(progression.chords):
+            raise ValueError('Different progression and melody quarts length')
+
+        if len(melody.bars[0].notes) == 0 and len(progression.chords) > 1:
+            progression.chords[0] = progression.chords[1]
+
+        for i in range(1, len(progression.chords)):
+            if len(melody.bars[i].notes) == 0:
+                progression.chords[i] = progression.chords[i - 1]
+
+        return progression
 
     @staticmethod
     def best_progression(
@@ -282,10 +341,9 @@ class EvolutionaryAlgorithm:
             population = survived
 
         population = sorted(population, key=lambda p: p.fitness(scale, melody))
-
         print('Learning process ended.')
 
-        return population[-1]
+        return EvolutionaryAlgorithm.__normalized(population[-1], melody)
 
 
 class MidiHelper:
@@ -305,8 +363,8 @@ class MidiHelper:
             file: mido.MidiFile,
             notes: list[Note],
             track_type: str = 'track_name',
-            track_name: str = 'Elec. Piano (Classic)',
-            velocity: int = 30
+            track_name: str = 'Grand Piano (Classic)',
+            velocity: int = 25
     ):
         new_track = mido.MidiTrack()
         new_track.append(mido.MetaMessage(track_type, name=track_name))
@@ -319,12 +377,19 @@ class MidiHelper:
         file.tracks.append(new_track)
 
     @staticmethod
-    def append_progression(file: mido.MidiFile, progression: Progression, velocity: int = 25):
+    def append_progression(
+            file: mido.MidiFile,
+            progression: Progression,
+            track_type: str = 'track_name',
+            track_name: str = 'Grand Piano (Classic)',
+            velocity: int = 25
+    ):
         for i in range(len(progression.chords[0].notes)):
             MidiHelper.__append_track(
                 file,
                 [chord.notes[i] for chord in progression.chords],
-                track_name=f'chord_{i}',
+                track_type=track_type,
+                track_name=track_name,
                 velocity=velocity
             )
 
