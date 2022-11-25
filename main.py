@@ -1,7 +1,7 @@
+import random
 from enum import Enum
 from typing import Union
 
-import random
 import mido
 import music21
 
@@ -13,9 +13,6 @@ class Note:
 
     start_delay: int
     playtime: int
-
-    def split(self, left_time: int, sep: int = 384):
-        pass  # TODO make proper split of the note
 
     def __init__(self, midi_value: int, start_delay: int, playtime: int):
 
@@ -239,9 +236,6 @@ class Melody:
     bars: list[Bar]
 
     def __put_note(self, note: Note, sep: int = 384):
-
-        #  TODO: make proper bar split
-
         if len(self.bars) == 0:
             self.bars.append(Bar([]))
 
@@ -265,20 +259,20 @@ class Melody:
             self.bars.append(Bar([patched]))
 
         else:
-            first_half = Note(
-                note.midi_value,
-                note.start_delay,
-                sep - len(self.bars[-1])
-            )
 
-            second_half = Note(
-                note.midi_value,
-                0,
-                note.playtime - first_half.playtime
-            )
+            #  TODO: Include spacing
 
+            first_half = Note(note.midi_value, note.start_delay, sep - len(self.bars[-1]))
             self.bars[-1].notes.append(first_half)
-            self.bars.append(Bar([second_half]))
+
+            for _ in range((note.playtime - first_half.playtime) // sep):
+                partial = Note(note.midi_value, 0, sep)
+                self.bars.append(Bar([partial]))
+
+            remainder = (note.playtime - first_half.playtime) % sep
+            if remainder > 0:
+                partial_remainder = Note(note.midi_value, 0, remainder)
+                self.bars.append(Bar([partial_remainder]))
 
     def __init__(self, notes: list[Note]):
         self.notes = notes
