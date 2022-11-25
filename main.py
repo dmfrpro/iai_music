@@ -1,6 +1,7 @@
 from enum import Enum
 import random
 import mido
+import music21
 
 
 class Note:
@@ -32,6 +33,8 @@ class Pattern(Enum):
     MAJOR = [0, 4, 7]
     MINOR = [0, 3, 7]
     DIMINISHED = [0, 3, 6]
+    SUS2 = [0, 5, 7]
+    SUS4 = [0, 2, 7]
 
 
 class Chord:
@@ -50,14 +53,14 @@ class Chord:
 
     def fitness(
             self,
-            key: "Key",
+            scale: "Scale",
             playing_quart: list[Note],
             equal_pattern_factor: int = 2,
             equal_note_factor: int = 5,
             preferred_distance: int = 3,
             distance_penalty: int = 10000000
     ) -> int:
-        value = equal_pattern_factor if key.pattern == self.pattern else 0
+        value = equal_pattern_factor if scale.pattern == self.pattern else 0
 
         for i in range(len(self.notes)):
             for j in range(len(playing_quart)):
@@ -78,8 +81,11 @@ class Chord:
         return isinstance(other, Chord) and self.notes == other.notes
 
 
-class Key:
+class Scale:
     __MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11]
+    __MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10]
+
+    __LITERALS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
 
     __MAJOR_PATTERNS = [
         Pattern.MAJOR,
@@ -91,48 +97,44 @@ class Key:
         Pattern.DIMINISHED
     ]
 
+    __MINOR_PATTERNS = [
+        Pattern.MINOR,
+        Pattern.DIMINISHED,
+        Pattern.MAJOR,
+        Pattern.MINOR,
+        Pattern.MINOR,
+        Pattern.MAJOR,
+        Pattern.MAJOR
+    ]
+
     initial_note: Note
     pattern: Pattern
     chords: list[Chord]
 
-    @staticmethod
-    def __best_key(melody: "Melody") -> (Note, Pattern):
-        if melody.notes is None or len(melody.notes) == 0:
-            raise ValueError('Notes list is invalid')
+    def __init__(self, melody: "Melody", literal: str, pattern: Pattern, playtime: int = 384):
+        midi_value = Scale.__LITERALS.index(literal) + 24 + 12 * max(melody.notes[0].octave - 3, 2)
 
-        major_styles = {}
+        self.initial_note = Note(midi_value, 0, playtime)
+        self.pattern = pattern
 
-        for note in melody.notes:
-            major_styles[note.octave_value] = \
-                {(i + note.octave_value) % 12 for i in Key.__MAJOR_STEPS}
+        patterns = Scale.__MAJOR_PATTERNS if pattern == Pattern.MAJOR else Scale.__MINOR_PATTERNS
+        steps = Scale.__MAJOR_STEPS if pattern == Pattern.MAJOR else Scale.__MINOR_STEPS
 
-        notes_octave_values = {note.octave_value for note in melody.notes}
-        result = {}
-        octave_value = -1
+        if len(patterns) != len(steps):
+            raise ValueError('Different lengths of patterns and steps while generating consonant chords')
 
-        for note, styles in major_styles.items():
-            common_major = notes_octave_values & styles
-
-            if len(common_major) > len(result):
-                result = common_major
-                octave_value = note
-
-        midi_value = octave_value + 24 + 12 * max(melody.notes[0].octave - 3, 2)
-        return Note(midi_value, 0, melody.notes[0].playtime), Pattern.MAJOR
-
-    def __init__(self, melody: "Melody", playtime: int = 384):
-        self.initial_note, self.pattern = Key.__best_key(melody)
-
-        midi_value = self.initial_note.midi_value
+        notes = [
+            Note(self.initial_note.midi_value + i, 0, playtime)
+            for i in steps
+        ]
 
         self.chords = [
-            Chord(Note(midi_value + i, 0, playtime), Key.__MAJOR_PATTERNS[i], i)
-            for i in range(len(Key.__MAJOR_PATTERNS))
+            Chord(notes[i], patterns[i], playtime)
+            for i in range(len(patterns))
         ]
 
     def __str__(self):
-        literals = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
-        return literals[self.initial_note.octave_value]
+        return Scale.__LITERALS[self.initial_note.octave_value]
 
 
 class Progression:
@@ -142,9 +144,9 @@ class Progression:
         self.chords = chords
 
     @staticmethod
-    def random_progression(key: Key, melody: "Melody") -> "Progression":
+    def random_progression(scale: Scale, melody: "Melody") -> "Progression":
         chords = [
-            key.chords[random.randint(0, len(key.chords) - 1)]
+            scale.chords[random.randint(0, len(scale.chords) - 1)]
             for _ in range(len(melody.quarts))
         ]
 
@@ -165,7 +167,7 @@ class Progression:
 
     def mutate(
             self,
-            key: Key,
+            scale: Scale,
             invoke_prob: float = 0.2,
             change_prob: float = 0.8,
             shift_limit: int = 3
@@ -175,17 +177,17 @@ class Progression:
                 if random.random() > change_prob:
                     new_index = \
                         (self.chords[i].order_index + random.randint(0, shift_limit - 1)) \
-                        % len(key.chords)
+                        % len(scale.chords)
 
-                    self.chords[i] = key.chords[new_index]
+                    self.chords[i] = scale.chords[new_index]
 
         return self
 
     def fitness(
             self,
-            key: Key,
+            scale: Scale,
             melody: "Melody",
-            equal_note_factor: int = 20,
+            equal_scale_factor: int = 100,
             repetition_factor: int = 1000,
             repetition_penalty: int = -10e6
     ):
@@ -193,7 +195,10 @@ class Progression:
 
         previous_chord = None
         for i in range(len(self.chords)):
-            value += self.chords[i].fitness(key, melody.quarts[i]) * equal_note_factor
+            value += self.chords[i].fitness(scale, melody.quarts[i])
+
+            value += equal_scale_factor \
+                if (self.chords[i].pattern == scale.pattern) else -equal_scale_factor
 
             value += repetition_factor \
                 if self.chords[i] != previous_chord else repetition_penalty
@@ -247,7 +252,7 @@ class EvolutionaryAlgorithm:
     @staticmethod
     def best_progression(
             melody: "Melody",
-            key: Key,
+            scale: Scale,
             generation_limit: int = 1000,
             population_size: int = 100,
             selection_factor: int = 10
@@ -256,23 +261,23 @@ class EvolutionaryAlgorithm:
             raise AttributeError('Invalid selection factor')
 
         population = [
-            Progression.random_progression(key, melody)
+            Progression.random_progression(scale, melody)
             for _ in range(population_size)
         ]
 
         for _ in range(generation_limit):
-            population = sorted(population, key=lambda p: p.fitness(key, melody))
+            population = sorted(population, key=lambda p: p.fitness(scale, melody))
             survived = population[-selection_factor:]
 
             for _ in range(population_size - selection_factor):
                 random_index = random.randint(0, selection_factor - 1)
                 parent1, parent2 = EvolutionaryAlgorithm.__get_random_parents(survived)
 
-                survived.append(survived[random_index].crossover(parent1, parent2).mutate(key))
+                survived.append(survived[random_index].crossover(parent1, parent2).mutate(scale))
 
             population = survived
 
-        population = sorted(population, key=lambda p: p.fitness(key, melody))
+        population = sorted(population, key=lambda p: p.fitness(scale, melody))
         return population[-1]
 
 
@@ -338,11 +343,14 @@ class MidiHelper:
 filenames = ['barbiegirl_mono.mid', 'input1.mid', 'input2.mid', 'input3.mid']
 for index, filename in enumerate(filenames):
     input_file = mido.MidiFile(filename)
-
     input_melody = MidiHelper.melody(input_file)
-    detected_key = Key(input_melody)
 
-    best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_key)
+    detected_key = music21.converter.parse(filename).analyze('key')
+
+    input_literal, pattern_str = detected_key.name.split()
+    detected_scale = Scale(input_melody, input_literal, Pattern[pattern_str.upper()])
+
+    best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_scale)
 
     MidiHelper.append_progression(input_file, best_progression)
-    input_file.save(f'DmitriiAlekhinOutput{index + 1}-{detected_key}.mid')
+    input_file.save(f'DmitriiAlekhinOutput{index + 1}-{detected_scale}.mid')
