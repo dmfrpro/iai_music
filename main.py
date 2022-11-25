@@ -83,7 +83,8 @@ class Scale:
     __MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11]
     __MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10]
 
-    __LITERALS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
+    __SHARP_LITERALS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'C#', 'A', 'A#', 'B']
+    __FLAT_LITERALS = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B']
 
     __MAJOR_PATTERNS = [
         Pattern.MAJOR,
@@ -110,7 +111,7 @@ class Scale:
     chords: list[Chord]
 
     def __init__(self, melody: "Melody", literal: str, pattern: Pattern, playtime: int = 384):
-        midi_value = Scale.__LITERALS.index(literal) + 24 + 12 * max(melody.notes[0].octave - 3, 2)
+        midi_value = Scale.__SHARP_LITERALS.index(literal) + 24 + 12 * max(melody.notes[0].octave - 3, 2)
 
         self.initial_note = Note(midi_value, 0, playtime)
         self.pattern = pattern
@@ -132,7 +133,8 @@ class Scale:
         ]
 
     def __str__(self):
-        return Scale.__LITERALS[self.initial_note.octave_value]
+        value = Scale.__FLAT_LITERALS[self.initial_note.octave_value]
+        return value + 'm' if self.pattern == Pattern.MINOR else value
 
 
 class Progression:
@@ -185,7 +187,9 @@ class Progression:
             self,
             scale: Scale,
             melody: "Melody",
-            equal_scale_factor: int = 100,
+            perfect_chord_factor: int = 500,
+            imperfect_chord_penalty: int = 3000,
+            equal_scale_factor: int = 200,
             repetition_factor: int = 1000,
             repetition_penalty: int = -10e6
     ):
@@ -193,10 +197,10 @@ class Progression:
 
         previous_chord = None
         for i in range(len(self.chords)):
-            value += self.chords[i].fitness(scale, melody.quarts[i])
+            value += self.chords[i].fitness(scale, melody.quarts[i]) * perfect_chord_factor
 
             value += equal_scale_factor \
-                if (self.chords[i].pattern == scale.pattern) else -equal_scale_factor
+                if (self.chords[i].pattern == scale.pattern) else -imperfect_chord_penalty
 
             value += repetition_factor \
                 if self.chords[i] != previous_chord else repetition_penalty
@@ -258,6 +262,8 @@ class EvolutionaryAlgorithm:
         if selection_factor > population_size:
             raise AttributeError('Invalid selection factor')
 
+        print('Learning process started...')
+
         population = [
             Progression.random_progression(scale, melody)
             for _ in range(population_size)
@@ -276,6 +282,9 @@ class EvolutionaryAlgorithm:
             population = survived
 
         population = sorted(population, key=lambda p: p.fitness(scale, melody))
+
+        print('Learning process ended.')
+
         return population[-1]
 
 
@@ -342,13 +351,15 @@ filenames = ['barbiegirl_mono.mid', 'input1.mid', 'input2.mid', 'input3.mid']
 for index, filename in enumerate(filenames):
     input_file = mido.MidiFile(filename)
     input_melody = MidiHelper.melody(input_file)
+    print(f'Successfully parsed {filename}')
 
     detected_key = music21.converter.parse(filename).analyze('key')
-
     input_literal, pattern_str = detected_key.name.split()
+    print(f'Detected key: {input_literal} {pattern_str}')
+
     detected_scale = Scale(input_melody, input_literal, Pattern[pattern_str.upper()])
-
     best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_scale)
-
     MidiHelper.append_progression(input_file, best_progression)
+
+    print(f'Output file is: DmitriiAlekhinOutput{index + 1}-{detected_scale}.mid\n')
     input_file.save(f'DmitriiAlekhinOutput{index + 1}-{detected_scale}.mid')
