@@ -33,8 +33,6 @@ class Pattern(Enum):
     MAJOR = [0, 4, 7]
     MINOR = [0, 3, 7]
     DIMINISHED = [0, 3, 6]
-    SUS2 = [0, 5, 7]
-    SUS4 = [0, 2, 7]
 
 
 class Chord:
