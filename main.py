@@ -43,6 +43,7 @@ class Mode(Enum):
 class Chord:
     notes: list[Note]
     mode: Mode
+    playtime: int
 
     def __init__(self, note: Note, mode: Mode, playtime: int = 384):
         if not isinstance(mode.value, list):
@@ -51,6 +52,7 @@ class Chord:
         chord_midi_values = (i + note.midi_value for i in mode.value)
         self.notes = [Note(i, 0, playtime) for i in chord_midi_values]
         self.mode = mode
+        self.playtime = playtime
 
     def fitness(
             self,
@@ -62,15 +64,11 @@ class Chord:
             distance_penalty: int = 10e10
     ) -> int:
         value = equal_pattern_factor if scale.pattern == self.mode else 0
-
         for i in range(len(self.notes)):
-            if len(playing_bar.notes) != 0:
-                primary_note = playing_bar.primary_note()
-                if (primary_note is not None) and primary_note == self.notes[i]:
-                    value += equal_note_factor * len(self.notes)
 
-            for j in range(len(playing_bar.notes)):
-                if self.notes[i] == playing_bar.notes[j]:
+            ordered = playing_bar.ordered()
+            for j in range(len(ordered)):
+                if self.notes[i] == ordered[j]:
                     value += equal_note_factor * (len(self.notes) - i)
 
         distances = [
@@ -112,7 +110,9 @@ class Scale:
             raise ValueError('Different lengths of patterns and steps while generating consonant chords')
 
         notes = [Note(self.initial_note.midi_value + i, 0, playtime) for i in steps]
-        self.chords = [Chord(notes[i], patterns[i], playtime) for i in range(len(patterns))]
+
+        chords = [Chord(notes[i], patterns[i], playtime) for i in range(len(patterns))]
+        self.chords = chords
 
     def __str__(self):
         value = Scale.__SHARP_LITERALS[self.initial_note.octave_value]
@@ -143,11 +143,12 @@ class Progression:
 
         return Progression(chords)
 
-    def mutate(self, scale: Scale, invoke_prob: float = 0.2, change_prob: float = 0.8) -> "Progression":
+    def mutate(self, invoke_prob: float = 0.05, change_prob: float = 0.5) -> "Progression":
         if random() < invoke_prob:
             for i in range(len(self.chords)):
                 if random() > change_prob:
-                    self.chords[i] = scale.chords[randint(0, len(scale.chords) - 1)]
+                    random_index = randint(0, len(self.chords) - 1)
+                    self.chords[i], self.chords[random_index] = self.chords[random_index], self.chords[i]
 
         return self
 
@@ -155,20 +156,39 @@ class Progression:
             self,
             scale: Scale,
             melody: "Melody",
-            perfect_chord_factor: int = 500,
-            imperfect_chord_penalty: int = 3000,
+            perfect_chord_factor: int = 750,
+            imperfect_chord_penalty: int = 10e6,
+            max_distance: int = 15,
+            distance_penalty: int = 10e8,
             equal_scale_factor: int = 500,
-            repetition_factor: int = 1000,
-            repetition_penalty: int = -10e6
+            repetition_penalty: int = 10e10
     ):
         value = 0
 
         previous_chord = None
+        previous_bar = None
+
         for i in range(len(self.chords)):
             value += self.chords[i].fitness(scale, melody.bars[i]) * perfect_chord_factor
-            value += equal_scale_factor if (self.chords[i].mode == scale.pattern) else -imperfect_chord_penalty
-            value += repetition_factor if self.chords[i] != previous_chord else repetition_penalty
+
+            value += equal_scale_factor \
+                if (self.chords[i].mode == scale.pattern) else -imperfect_chord_penalty
+
+            if self.chords[i] == previous_chord \
+                    and melody.bars[i].notes != previous_bar.notes \
+                    and len(previous_bar.notes) != 0:
+                value -= repetition_penalty
+
+            if previous_chord is not None:
+                max_midi_value = max(note.midi_value for note in self.chords[i].notes + previous_chord.notes)
+                min_midi_value = min(note.midi_value for note in self.chords[i].notes + previous_chord.notes)
+
+                if max_midi_value - min_midi_value > max_distance:
+                    value -= distance_penalty
+
             previous_chord = self.chords[i]
+            previous_bar = melody.bars[i]
+
         return value
 
 
@@ -177,11 +197,8 @@ class Bar:
     notes: list[Note]
     __length: int
 
-    def primary_note(self) -> Note:
-        if len(self.notes) == 0:
-            raise IndexError('Empty bar, no primary note found')
-
-        return sorted(self.notes, key=lambda note: note.playtime)[0]
+    def ordered(self) -> list[Note]:
+        return sorted(self.notes, key=lambda note: note.playtime)
 
     def append_delay(self, delay: int):
         if self.__length + delay > Bar.MAX_LENGTH:
@@ -261,14 +278,17 @@ class EvolutionaryAlgorithm:
         print('Learning process started...')
         population = [Progression.random_progression(scale, melody) for _ in range(population_size)]
 
-        for _ in range(generation_limit):
+        for i in range(generation_limit):
             population = sorted(population, key=lambda p: p.fitness(scale, melody), reverse=True)
             survived = population[0:selection_factor]
 
             for _ in range(population_size - selection_factor):
                 random_index = randint(0, selection_factor - 1)
                 parent1, parent2 = tuple(sample(survived, 2))
-                survived.append(survived[random_index].crossover(parent1, parent2).mutate(scale))
+                survived.append(survived[random_index].crossover(parent1, parent2).mutate())
+
+            if i % 100 == 0:
+                print(f'Processed generation {i} of {generation_limit}')
 
             population = survived
 
