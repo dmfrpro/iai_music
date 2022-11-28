@@ -56,14 +56,14 @@ class Chord:
 
     def fitness(
             self,
-            scale: "Scale",
+            key_chords: "KeyChords",
             playing_bar: "Bar",
             equal_pattern_factor: int = 2000,
             equal_note_factor: int = 10e5,
             preferred_distance: int = 4,
             distance_penalty: int = 10e10
     ) -> int:
-        value = equal_pattern_factor if scale.pattern == self.mode else 0
+        value = equal_pattern_factor if key_chords.pattern == self.mode else 0
         for i in range(len(self.notes)):
 
             ordered = playing_bar.ordered()
@@ -85,7 +85,7 @@ class Chord:
         return isinstance(other, Chord) and self.notes == other.notes
 
 
-class Scale:
+class KeyChords:
     __MAJOR_STEPS = [0, 2, 4, 5, 7, 9, 11]
     __MINOR_STEPS = [0, 2, 3, 5, 7, 8, 10]
 
@@ -98,13 +98,13 @@ class Scale:
     chords: list[Chord]
 
     def __init__(self, melody: "Melody", literal: str, pattern: Mode, playtime: int = 384):
-        midi_value = Scale.__SHARP_LITERALS.index(literal) + 24 + 12 * max(melody.notes[0].octave - 3, 2)
+        midi_value = KeyChords.__SHARP_LITERALS.index(literal) + 24 + 12 * max(melody.notes[0].octave - 3, 2)
 
         self.initial_note = Note(midi_value, 0, playtime)
         self.pattern = pattern
 
-        patterns = Scale.__MAJOR_MODES if pattern == Mode.MAJOR else Scale.__MINOR_MODES
-        steps = Scale.__MAJOR_STEPS if pattern == Mode.MAJOR else Scale.__MINOR_STEPS
+        patterns = KeyChords.__MAJOR_MODES if pattern == Mode.MAJOR else KeyChords.__MINOR_MODES
+        steps = KeyChords.__MAJOR_STEPS if pattern == Mode.MAJOR else KeyChords.__MINOR_STEPS
 
         if len(patterns) != len(steps):
             raise ValueError('Different lengths of patterns and steps while generating consonant chords')
@@ -115,7 +115,7 @@ class Scale:
         self.chords = chords
 
     def __str__(self):
-        value = Scale.__SHARP_LITERALS[self.initial_note.octave_value]
+        value = KeyChords.__SHARP_LITERALS[self.initial_note.octave_value]
         return value + 'm' if self.pattern == Mode.MINOR else value
 
 
@@ -126,9 +126,9 @@ class Progression:
         self.chords = chords
 
     @staticmethod
-    def random_progression(scale: Scale, melody: "Melody") -> "Progression":
+    def random_progression(key_chords: KeyChords, melody: "Melody") -> "Progression":
         chords = [
-            scale.chords[randint(0, len(scale.chords) - 1)]
+            key_chords.chords[randint(0, len(key_chords.chords) - 1)]
             for _ in range(len(melody.bars))
         ]
 
@@ -154,13 +154,13 @@ class Progression:
 
     def fitness(
             self,
-            scale: Scale,
+            key_chords: KeyChords,
             melody: "Melody",
             perfect_chord_factor: int = 750,
             imperfect_chord_penalty: int = 10e6,
             max_distance: int = 15,
             distance_penalty: int = 10e8,
-            equal_scale_factor: int = 500,
+            equal_key_chords_factor: int = 500,
             repetition_penalty: int = 10e10
     ):
         value = 0
@@ -169,10 +169,10 @@ class Progression:
         previous_bar = None
 
         for i in range(len(self.chords)):
-            value += self.chords[i].fitness(scale, melody.bars[i]) * perfect_chord_factor
+            value += self.chords[i].fitness(key_chords, melody.bars[i]) * perfect_chord_factor
 
-            value += equal_scale_factor \
-                if (self.chords[i].mode == scale.pattern) else -imperfect_chord_penalty
+            value += equal_key_chords_factor \
+                if (self.chords[i].mode == key_chords.pattern) else -imperfect_chord_penalty
 
             if self.chords[i] == previous_chord \
                     and melody.bars[i].notes != previous_bar.notes \
@@ -270,16 +270,16 @@ class EvolutionaryAlgorithm:
     @staticmethod
     def best_progression(
             melody: "Melody",
-            scale: Scale,
+            key_chords: KeyChords,
             generation_limit: int = 1000,
             population_size: int = 100,
             selection_factor: int = 10
     ) -> Progression:
         print('Learning process started...')
-        population = [Progression.random_progression(scale, melody) for _ in range(population_size)]
+        population = [Progression.random_progression(key_chords, melody) for _ in range(population_size)]
 
         for i in range(generation_limit):
-            population = sorted(population, key=lambda p: p.fitness(scale, melody), reverse=True)
+            population = sorted(population, key=lambda p: p.fitness(key_chords, melody), reverse=True)
             survived = population[0:selection_factor]
 
             for _ in range(population_size - selection_factor):
@@ -292,7 +292,7 @@ class EvolutionaryAlgorithm:
 
             population = survived
 
-        population = sorted(population, key=lambda p: p.fitness(scale, melody), reverse=True)
+        population = sorted(population, key=lambda p: p.fitness(key_chords, melody), reverse=True)
         print('Learning process ended.')
         return population[0]
 
@@ -355,10 +355,10 @@ for filename in filenames:
     input_literal, pattern_str = detected_key.name.split()
     print(f'Detected key: {input_literal} {pattern_str}')
 
-    detected_scale = Scale(input_melody, input_literal, Mode[pattern_str.upper()])
-    best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_scale)
+    detected_key_chords = KeyChords(input_melody, input_literal, Mode[pattern_str.upper()])
+    best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_key_chords)
     MidiHelper.append_progression(input_file, best_progression)
 
     index = int(sub(r'\D', '', filename))
-    print(f'Output file is: DmitriiAlekhinOutput{index}-{detected_scale}.mid\n')
-    input_file.save(f'DmitriiAlekhinOutput{index}-{detected_scale}.mid')
+    print(f'Output file is: DmitriiAlekhinOutput{index}-{detected_key_chords}.mid\n')
+    input_file.save(f'DmitriiAlekhinOutput{index}-{detected_key_chords}.mid')
