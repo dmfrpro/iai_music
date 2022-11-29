@@ -141,6 +141,11 @@ class Chord:
     Boolean flag indicating is the chord an inverted one or two times
     """
 
+    is_second_inverted: bool
+    """
+    Boolean flag indicating is the chord an inverted one or two times
+    """
+
     def __init__(self, note: Note, mode: Mode, playtime: int = 384):
         """
         Initializes a chord by the given first note and mode values list
@@ -156,36 +161,40 @@ class Chord:
         self.mode = mode
         self.playtime = playtime
         self.is_inverted = False
+        self.is_second_inverted = False
 
     def fitness(
             self,
             key_chords: "KeyChords",
             playing_bar: "Bar",
-            inverted_or_dim_chord_penalty: int = 400,
+            dim_chord_penalty: int = 100,
+            second_inverted_penalty: int = 100,
             perfect_chord_factor: int = 600,
             too_high_chord_factor: int = 10e3,
             equal_note_factor: int = 600,
-            distance_factor: int = 10e4
+            distance_factor: int = 10e5
     ) -> int:
         """
         Fitness function for the chord (used in Progression's fitness function)
+        :param second_inverted_penalty: penalty for second inverses
         :param key_chords: available chords build from the determined key
         :param playing_bar: currently playing bar
-        :param inverted_or_dim_chord_penalty: penalty factor if the chord is inverted or its mode is DIM
-        :param perfect_chord_factor: fit factor if the chord is in the list of perfect chords
-        :param too_high_chord_factor: fit/miss factor is the chord is too high rather than playing bar notes
+        :param dim_chord_penalty: penalty factor if its mode is DIM
+        :param perfect_chord_factor: fit/miss factor if the chord is in the list of perfect chords
+        :param too_high_chord_factor: fit/miss factor is the chord notes MIDI values
+         are too high rather than playing bar notes MIDI values
         :param equal_note_factor: fit factor if the chord has the same note(s) as in playing bar notes
         playing_bar's note octave value and chord's note octave value
-        :param distance_factor: factor if the distance is greater than preferred distance
+        :param distance_factor: fit/miss factor if the distance is greater than preferred distance
         (e.g. chord is dissonant with playing_bar's notes)
         :return: evaluation result of how good is chord with respect to the playing bar
         """
-        value = -inverted_or_dim_chord_penalty if self.is_inverted else inverted_or_dim_chord_penalty
-        value += -inverted_or_dim_chord_penalty if self.mode is Mode.DIM else inverted_or_dim_chord_penalty
+        value = -second_inverted_penalty if self.is_second_inverted else +second_inverted_penalty
+        value += -dim_chord_penalty if self.mode is Mode.DIM else dim_chord_penalty
         value += perfect_chord_factor if self in key_chords.perfect_chords else -perfect_chord_factor
 
         value += -too_high_chord_factor if any(
-            note.octave_value > playing_note.octave_value
+            note.midi_value >= playing_note.midi_value
             for note in self.notes
             for playing_note in playing_bar.notes
         ) else too_high_chord_factor
@@ -232,6 +241,7 @@ class Chord:
         """
         instance = self.first_inverse().first_inverse()
         instance.notes = [note.change_octave(-1) for note in instance.notes]
+        instance.is_second_inverted = True
         return instance
 
     def __eq__(self, other):
@@ -267,7 +277,7 @@ class KeyChords:
     https://en.wikipedia.org/wiki/Major_scale#Triad_qualities
     """
 
-    __MINOR_MODES = [Mode.MINOR, Mode.DIM, Mode.MAJOR, Mode.MINOR, Mode.MAJOR, Mode.MAJOR, Mode.DIM]
+    __MINOR_MODES = [Mode.MINOR, Mode.DIM, Mode.MAJOR, Mode.MINOR, Mode.MAJOR, Mode.MAJOR, Mode.MAJOR]
     """
     Roman numeral analysis for the minor scale triads: 
     https://en.wikipedia.org/wiki/Minor_scale#Harmony
@@ -360,7 +370,7 @@ class Progression:
         return Progression(chords)
 
     @staticmethod
-    def crossover(parent1: "Progression", parent2: "Progression", prob: float = 0.2) -> "Progression":
+    def crossover(parent1: "Progression", parent2: "Progression", prob: float = 0.8) -> "Progression":
         """
         Returns a crossed progression from the given two parents
         :param parent1: first parent
@@ -375,9 +385,10 @@ class Progression:
 
         return Progression(chords)
 
-    def mutate(self, invoke_prob: float = 0.1, swap_prob: float = 0.5) -> "Progression":
+    def mutate(self, key_chords: KeyChords, invoke_prob: float = 0.1, swap_prob: float = 0.1) -> "Progression":
         """
         Swap mutation of the chord progression
+        :param key_chords: key chords
         :param invoke_prob: probability of invoke of mutation
         :param swap_prob: probability of swapping
         :return: self, but mutated
@@ -385,7 +396,7 @@ class Progression:
         if random() < invoke_prob:
             for i in range(len(self.chords)):
                 if random() > swap_prob:
-                    random_index = randint(0, len(self.chords) - 1)
+                    random_index = randint(0, len(key_chords.chords) - 1)
                     self.chords[i], self.chords[random_index] = self.chords[random_index], self.chords[i]
 
         return self
@@ -394,12 +405,12 @@ class Progression:
             self,
             key_chords: KeyChords,
             melody: "Melody",
-            perfect_chord_factor: int = 10,
+            perfect_chord_factor: int = 10e4,
             equal_key_chords_penalty: int = 1000,
-            equal_key_chords_factor: int = 7,
-            preferred_distance: int = 5,
-            distance_factor: int = 10e5,
-            repetition_penalty: int = 10e7
+            equal_key_chords_factor: int = 1000,
+            preferred_distance: int = 6,
+            distance_factor: int = 10e6,
+            repetition_penalty: int = 10e8
     ):
         """
         fitness function for the chord progression
@@ -408,8 +419,9 @@ class Progression:
         :param perfect_chord_factor: multiplication factor for the output of chord's fitness function
         :param equal_key_chords_penalty: penalty for the chord with not equal mode
         :param equal_key_chords_factor: fit for the chord with equal mode
-        :param preferred_distance: max distance between the highest notes between neighbor chords
-        :param distance_factor: fit/penalty for the good/bad distance
+        :param preferred_distance: max distance between the highest (same procedure for lowest)
+        notes between neighbor chords
+        :param distance_factor: fit/miss factor for the good/bad distance
         :param repetition_penalty: penalty for repeated chord
         :return: evaluation result for the chord progression
         """
@@ -426,8 +438,26 @@ class Progression:
                 max_midi_previous = max(note.midi_value for note in previous_chord.notes)
                 max_midi_current = max(note.midi_value for note in self.chords[i].notes)
 
+                min_midi_previous = min(note.midi_value for note in previous_chord.notes)
+                min_midi_current = min(note.midi_value for note in self.chords[i].notes)
+
                 value += distance_factor \
                     if abs(max_midi_current - max_midi_previous) <= preferred_distance else -distance_factor
+
+                value += distance_factor \
+                    if abs(min_midi_previous - min_midi_current) <= preferred_distance else -distance_factor
+
+                if i != len(self.chords) - 1:
+                    next_chord = self.chords[i + 1]
+
+                    max_midi_next = max(note.midi_value for note in next_chord.notes)
+                    min_midi_next = min(note.midi_value for note in next_chord.notes)
+
+                    value += distance_factor \
+                        if abs(max_midi_next - max_midi_previous) <= preferred_distance else -distance_factor
+
+                    value += distance_factor \
+                        if abs(min_midi_next - min_midi_current) <= preferred_distance else -distance_factor
 
             if self.chords[i] == previous_chord:
                 value -= repetition_penalty
@@ -587,7 +617,7 @@ class EvolutionaryAlgorithm:
             for _ in range(population_size - selection_factor):
                 random_index = randint(0, selection_factor - 1)
                 parent1, parent2 = tuple(sample(survived, 2))
-                survived += [survived[random_index].crossover(parent1, parent2).mutate()]
+                survived += [survived[random_index].crossover(parent1, parent2).mutate(key_chords)]
 
             if i % 100 == 0:
                 print(f'Processed generation {i} of {generation_limit}')
