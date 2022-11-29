@@ -2,6 +2,7 @@ from random import random, randint, sample
 from enum import Enum
 from os import listdir, curdir
 from re import match, sub
+from sys import argv
 
 import mido
 import music21
@@ -15,8 +16,11 @@ class Note:
     start_delay: int
     playtime: int
 
+    def change_octave(self, factor: int):
+        return Note(self.midi_value + 12 * factor, self.start_delay, self.playtime)
+
     def __init__(self, midi_value: int, start_delay: int, playtime: int):
-        if not (21 <= midi_value <= 108):
+        if not (0 <= midi_value <= 127):
             raise ValueError('Cannot create note: invalid midi_value')
         elif playtime < 0:
             raise ValueError('Cannot create note: invalid playtime')
@@ -44,6 +48,7 @@ class Chord:
     notes: list[Note]
     mode: Mode
     playtime: int
+    is_inverted: bool
 
     def __init__(self, note: Note, mode: Mode, playtime: int = 384):
         if not isinstance(mode.value, list):
@@ -53,23 +58,25 @@ class Chord:
         self.notes = [Note(i, 0, playtime) for i in chord_midi_values]
         self.mode = mode
         self.playtime = playtime
+        self.is_inverted = False
 
     def fitness(
             self,
             key_chords: "KeyChords",
             playing_bar: "Bar",
-            equal_pattern_factor: int = 2000,
-            equal_note_factor: int = 10e5,
-            preferred_distance: int = 4,
-            distance_penalty: int = 10e10
+            inverted_chord_penalty: int = 200,
+            perfect_chord_factor: int = 80,
+            equal_note_factor: int = 400,
+            preferred_distance: int = 6,
+            distance_penalty: int = 10e4
     ) -> int:
-        value = equal_pattern_factor if key_chords.pattern == self.mode else 0
-        for i in range(len(self.notes)):
+        value = -inverted_chord_penalty if self.is_inverted else 0
+        value += perfect_chord_factor if self in key_chords.perfect_chords else -perfect_chord_factor
 
-            ordered = playing_bar.ordered()
-            for j in range(len(ordered)):
-                if self.notes[i] == ordered[j]:
-                    value += equal_note_factor * (len(self.notes) - i)
+        for i in range(len(self.notes)):
+            for j in range(len(playing_bar.notes)):
+                if self.notes[i] == playing_bar.notes[j]:
+                    value += equal_note_factor * (len(self.notes) - j)
 
         distances = [
             abs(playing_note.octave_value - note.octave_value)
@@ -81,8 +88,26 @@ class Chord:
 
         return value
 
+    def first_inverse(self) -> "Chord":
+        instance = self.__copy__()
+        instance.notes = self.notes[1:]
+
+        root = self.notes[0]
+        instance.notes.append(Note(root.midi_value + 12, root.start_delay, root.playtime))
+        instance.is_inverted = True
+
+        return instance
+
+    def second_inverse(self) -> "Chord":
+        instance = self.first_inverse().first_inverse()
+        instance.notes = [note.change_octave(-1) for note in instance.notes]
+        return instance
+
     def __eq__(self, other):
         return isinstance(other, Chord) and self.notes == other.notes
+
+    def __copy__(self):
+        return Chord(self.notes[0], self.mode, self.playtime)
 
 
 class KeyChords:
@@ -94,29 +119,36 @@ class KeyChords:
     __MINOR_MODES = [Mode.MINOR, Mode.DIM, Mode.MAJOR, Mode.MINOR, Mode.MAJOR, Mode.MAJOR, Mode.DIM]
 
     initial_note: Note
-    pattern: Mode
-    chords: list[Chord]
+    mode: Mode
 
-    def __init__(self, melody: "Melody", literal: str, pattern: Mode, playtime: int = 384):
-        midi_value = KeyChords.__SHARP_LITERALS.index(literal) + 24 + 12 * max(melody.notes[0].octave - 3, 2)
+    chords: list[Chord]
+    perfect_chords: list[Chord]
+
+    def __init__(self, melody: "Melody", literal: str, mode: Mode, playtime: int = 384):
+        min_octave = min(note.octave for note in melody.notes)
+        midi_value = KeyChords.__SHARP_LITERALS.index(literal) + 12 * max(min_octave - 1, 2)
 
         self.initial_note = Note(midi_value, 0, playtime)
-        self.pattern = pattern
+        self.mode = mode
 
-        patterns = KeyChords.__MAJOR_MODES if pattern == Mode.MAJOR else KeyChords.__MINOR_MODES
-        steps = KeyChords.__MAJOR_STEPS if pattern == Mode.MAJOR else KeyChords.__MINOR_STEPS
+        patterns = KeyChords.__MAJOR_MODES if mode == Mode.MAJOR else KeyChords.__MINOR_MODES
+        steps = KeyChords.__MAJOR_STEPS if mode == Mode.MAJOR else KeyChords.__MINOR_STEPS
 
         if len(patterns) != len(steps):
             raise ValueError('Different lengths of patterns and steps while generating consonant chords')
 
         notes = [Note(self.initial_note.midi_value + i, 0, playtime) for i in steps]
-
         chords = [Chord(notes[i], patterns[i], playtime) for i in range(len(patterns))]
-        self.chords = chords
+
+        self.perfect_chords = list(filter(lambda chord: chord.mode is mode, chords))
+
+        first_inverses = [chord.first_inverse() for chord in chords if chord.mode is not Mode.DIM]
+        second_inverses = [chord.second_inverse() for chord in chords if chord.mode is not Mode.DIM]
+        self.chords = chords + first_inverses + second_inverses
 
     def __str__(self):
         value = KeyChords.__SHARP_LITERALS[self.initial_note.octave_value]
-        return value + 'm' if self.pattern == Mode.MINOR else value
+        return value + 'm' if self.mode == Mode.MINOR else value
 
 
 class Progression:
@@ -156,39 +188,33 @@ class Progression:
             self,
             key_chords: KeyChords,
             melody: "Melody",
-            perfect_chord_factor: int = 750,
-            imperfect_chord_penalty: int = 10e6,
-            max_distance: int = 15,
-            distance_penalty: int = 10e8,
-            equal_key_chords_factor: int = 500,
-            repetition_penalty: int = 10e10
+            perfect_chord_factor: int = 10,
+            imperfect_chord_penalty: int = 1000,
+            equal_key_chords_factor: int = 7,
+            preferred_distance: int = 5,
+            distance_factor: int = 10e5,
+            repetition_penalty: int = 10e7
     ):
         value = 0
-
         previous_chord = None
-        previous_bar = None
 
         for i in range(len(self.chords)):
             value += self.chords[i].fitness(key_chords, melody.bars[i]) * perfect_chord_factor
 
             value += equal_key_chords_factor \
-                if (self.chords[i].mode == key_chords.pattern) else -imperfect_chord_penalty
-
-            if self.chords[i] == previous_chord \
-                    and melody.bars[i].notes != previous_bar.notes \
-                    and len(previous_bar.notes) != 0:
-                value -= repetition_penalty
+                if (self.chords[i].mode == key_chords.mode) else -imperfect_chord_penalty
 
             if previous_chord is not None:
-                max_midi_value = max(note.midi_value for note in self.chords[i].notes + previous_chord.notes)
-                min_midi_value = min(note.midi_value for note in self.chords[i].notes + previous_chord.notes)
+                max_midi_previous = max(note.midi_value for note in previous_chord.notes)
+                max_midi_current = max(note.midi_value for note in self.chords[i].notes)
 
-                if max_midi_value - min_midi_value > max_distance:
-                    value -= distance_penalty
+                value += distance_factor \
+                    if abs(max_midi_current - max_midi_previous) <= preferred_distance else -distance_factor
+
+            if self.chords[i] == previous_chord:
+                value -= repetition_penalty
 
             previous_chord = self.chords[i]
-            previous_bar = melody.bars[i]
-
         return value
 
 
@@ -196,9 +222,6 @@ class Bar:
     MAX_LENGTH = 384
     notes: list[Note]
     __length: int
-
-    def ordered(self) -> list[Note]:
-        return sorted(self.notes, key=lambda note: note.playtime)
 
     def append_delay(self, delay: int):
         if self.__length + delay > Bar.MAX_LENGTH:
@@ -310,9 +333,15 @@ class MidiHelper:
         ]
 
     @staticmethod
-    def __append_track(file: mido.MidiFile, notes: list[Note], track_type: str = 'track_name', velocity: int = 25):
+    def __append_track(
+            file: mido.MidiFile,
+            notes: list[Note],
+            track_type: str = 'track_name',
+            name: str = 'unnamed_track',
+            velocity: int = 20
+    ):
         new_track = mido.MidiTrack()
-        new_track.append(mido.MetaMessage(track_type))
+        new_track.append(mido.MetaMessage(track_type, name=name))
         new_track.append(mido.Message('program_change', program=0, time=0))
 
         for note in notes:
@@ -324,7 +353,10 @@ class MidiHelper:
     @staticmethod
     def append_progression(file: mido.MidiFile, progression: Progression):
         for i in range(len(progression.chords[0].notes)):
-            MidiHelper.__append_track(file, [chord.notes[i] for chord in progression.chords])
+            MidiHelper.__append_track(
+                file, [chord.notes[i] for chord in progression.chords],
+                name=f'chord_track{i}'
+            )
 
     @staticmethod
     def melody(file: mido.MidiFile) -> "Melody":
@@ -345,7 +377,9 @@ class MidiHelper:
         return Melody(notes)
 
 
-filenames = sorted(filter(lambda x: match(r'input\d+\.mid', x), listdir(curdir)))
+filenames = sorted(filter(lambda x: match(r'input\d+\.mid', x), listdir(curdir))) \
+    if len(argv) <= 1 else argv[1:]
+
 for filename in filenames:
     input_file = mido.MidiFile(filename)
     input_melody = MidiHelper.melody(input_file)
