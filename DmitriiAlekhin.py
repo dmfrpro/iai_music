@@ -698,7 +698,7 @@ for filename in filenames:
     MidiHelper.append_progression(input_file, best_progression)
 
     index_str = sub(r'\D', '', filename)
-    index = int(index_str) if match(r'\d+', index_str) else ''
+    index = int(index_str) if match(r'\d+', index_str) else filename.replace('.mid', '')
 
     print(f'Output file is: DmitriiAlekhinOutput{index}-{detected_key_chords}.mid\n')
     input_file.save(f'DmitriiAlekhinOutput{index}-{detected_key_chords}.mid')
