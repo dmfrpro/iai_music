@@ -395,6 +395,8 @@ for filename in filenames:
     best_progression = EvolutionaryAlgorithm.best_progression(input_melody, detected_key_chords)
     MidiHelper.append_progression(input_file, best_progression)
 
-    index = int(sub(r'\D', '', filename))
+    index_str = sub(r'\D', '', filename)
+    index = int(index_str) if match(r'\d+', index_str) else ''
+
     print(f'Output file is: DmitriiAlekhinOutput{index}-{detected_key_chords}.mid\n')
     input_file.save(f'DmitriiAlekhinOutput{index}-{detected_key_chords}.mid')
