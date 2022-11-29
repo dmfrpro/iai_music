@@ -24,6 +24,8 @@ class Note:
             raise ValueError('Cannot create note: invalid midi_value')
         elif playtime < 0:
             raise ValueError('Cannot create note: invalid playtime')
+        elif start_delay < 0:
+            raise ValueError('Cannot create note: invalid start_delay')
 
         self.midi_value = midi_value
         self.octave_value = midi_value % 12
