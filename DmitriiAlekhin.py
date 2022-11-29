@@ -168,7 +168,7 @@ class Chord:
             key_chords: "KeyChords",
             playing_bar: "Bar",
             dim_chord_penalty: int = 100,
-            second_inverted_penalty: int = 100,
+            second_inverted_penalty: int = 200,
             perfect_chord_factor: int = 600,
             too_high_chord_factor: int = 10e3,
             equal_note_factor: int = 600,
